@@ -1,0 +1,7 @@
+{
+  "name": "AdaptIQ - Adaptive Engineering Learning Portal",
+  "description": "Adaptive engineering LMS and CodeTantra academic portal featuring personalized learning pathways, interactive backpropagation computation graphs, cloud programming labs, and adaptive diagnostics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
