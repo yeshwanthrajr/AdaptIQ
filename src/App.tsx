@@ -49,7 +49,7 @@ import { EmailVerificationBanner } from './components/EmailVerificationBanner';
 import { LayoutGrid, Sparkles, BookOpen, GraduationCap, Briefcase, ShieldCheck, ArrowRight } from 'lucide-react';
 
 function MainAppContent() {
-  const [viewMode, setViewMode] = useState<ViewMode>('modern');
+  const [studentViewMode, setStudentViewMode] = useState<'modern' | 'classic'>('modern');
   const [activeNav, setActiveNav] = useState<string>('dashboard');
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
   const [modules, setModules] = useState<CurriculumModule[]>(curriculumModules);
@@ -58,16 +58,17 @@ function MainAppContent() {
   const [studyTasks, setStudyTasks] = useState<StudyTask[]>(initialStudyTasks);
   const [selectedTestNote, setSelectedTestNote] = useState<FacultyNote | null>(null);
 
-  const { studentProfile, updateStudentData, facultyNotes } = useAuth();
-
-  // Keep viewMode synced with user role if desired, or allow toggling
-  useEffect(() => {
-    if (studentProfile.role === 'admin' && viewMode === 'modern') {
-      setViewMode('admin');
-    } else if (studentProfile.role === 'faculty' && viewMode === 'modern') {
-      setViewMode('faculty');
+  const { currentUser, loading, studentProfile, updateStudentData, facultyNotes } = useAuth();
+  const viewMode: ViewMode = studentProfile.role === 'admin'
+    ? 'admin'
+    : studentProfile.role === 'faculty'
+      ? 'faculty'
+      : studentViewMode;
+  const setViewMode = (mode: ViewMode) => {
+    if (studentProfile.role === 'student' && (mode === 'modern' || mode === 'classic')) {
+      setStudentViewMode(mode);
     }
-  }, [studentProfile.role]);
+  };
 
   // Synchronize badges and study planner tasks with persisted profile
   useEffect(() => {
@@ -86,6 +87,28 @@ function MainAppContent() {
     }
   }, [studentProfile.earnedBadgeIds, studentProfile.studyPlannerTasks]);
 
+  // Load modules and study tasks directly from persistent SQLite Database
+  useEffect(() => {
+    fetch('/api/curriculum/modules')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success && data.modules?.length > 0) {
+          setModules(data.modules);
+        }
+      })
+      .catch((e) => console.warn('Could not load modules from database:', e));
+
+    const uid = studentProfile.uid || 'student-001';
+    fetch(`/api/tasks?userId=${uid}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success && data.tasks?.length > 0) {
+          setStudyTasks(data.tasks);
+        }
+      })
+      .catch((e) => console.warn('Could not load tasks from database:', e));
+  }, [studentProfile.uid]);
+
   // Study Planner Task Handlers
   const handleAddTask = (newTaskData: Omit<StudyTask, 'id' | 'createdAt'>) => {
     const newTask: StudyTask = {
@@ -93,6 +116,12 @@ function MainAppContent() {
       id: `task-${Date.now()}`,
       createdAt: new Date().toISOString().split('T')[0],
     };
+
+    fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...newTask, userId: studentProfile.uid || 'student-001' }),
+    }).catch((e) => console.warn('Database task create error:', e));
 
     setStudyTasks((prev) => {
       const updated = [newTask, ...prev];
@@ -102,6 +131,16 @@ function MainAppContent() {
   };
 
   const handleToggleTask = (taskId: string) => {
+    const target = studyTasks.find((t) => t.id === taskId);
+    if (target) {
+      const nextStatus = target.status === 'completed' ? 'pending' : 'completed';
+      fetch(`/api/tasks/${taskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus }),
+      }).catch((e) => console.warn('Database task toggle error:', e));
+    }
+
     setStudyTasks((prev) => {
       const updated = prev.map((t) =>
         t.id === taskId
@@ -114,6 +153,10 @@ function MainAppContent() {
   };
 
   const handleDeleteTask = (taskId: string) => {
+    fetch(`/api/tasks/${taskId}`, { method: 'DELETE' }).catch((e) =>
+      console.warn('Database task delete error:', e)
+    );
+
     setStudyTasks((prev) => {
       const updated = prev.filter((t) => t.id !== taskId);
       updateStudentData({ studyPlannerTasks: updated });
@@ -160,8 +203,19 @@ function MainAppContent() {
     });
   };
 
-  // State update handlers synced with Firestore
+  // State update handlers synced with SQLite database
   const handleDiagnosticComplete = async (newMastery: number, newTier: string, scorePercent?: number) => {
+    fetch('/api/diagnostics/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: studentProfile.uid || 'student-001',
+        score: Math.round((newMastery / 100) * 4),
+        totalQuestions: 4,
+        bloomTier: newTier,
+      }),
+    }).catch((e) => console.warn('Database diagnostic submit error:', e));
+
     await updateStudentData({
       masteryIndex: newMastery,
       bloomTier: newTier,
@@ -178,6 +232,16 @@ function MainAppContent() {
   };
 
   const handleSessionComplete = async () => {
+    fetch('/api/curriculum/progress', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        moduleId: 'module-2',
+        status: 'mastered',
+        masteryScore: 92,
+      }),
+    }).catch((e) => console.warn('Database module progress error:', e));
+
     await updateStudentData({
       masteryIndex: Math.min(100, studentProfile.masteryIndex + 2),
       lastRecalibrated: 'Just now',
@@ -219,10 +283,16 @@ function MainAppContent() {
     setActiveModal('practice-test');
   };
 
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-sm font-semibold text-slate-600">Verifying your institutional account...</div>;
+  }
+
+  if (!currentUser) return <AuthModal />;
+
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-800 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       
-      {/* Top Navigation Bar with RBAC and quick persona switcher */}
+      {/* Navigation remains scoped to the authenticated role. */}
       <TopNavigationBar
         viewMode={viewMode}
         setViewMode={setViewMode}
@@ -239,11 +309,10 @@ function MainAppContent() {
 
         {/* IF ADMIN PORTAL */}
         {viewMode === 'admin' ? (
-          <AdminDashboardView onSwitchToStudent={() => setViewMode('modern')} />
+          <AdminDashboardView />
         ) : viewMode === 'faculty' ? (
           /* IF FACULTY PORTAL */
           <FacultyPortalView 
-            onSwitchToStudent={() => setViewMode('modern')}
             onOpenPracticeTest={handleLaunchPracticeTestFromNote}
           />
         ) : viewMode === 'classic' ? (
@@ -360,21 +429,18 @@ function MainAppContent() {
       <InstitutionalFooter />
 
       {/* Floating View Switcher Quick Toggle */}
-      <div className="fixed bottom-5 right-5 z-40 flex items-center gap-2">
-        <button
-          onClick={() => {
-            if (viewMode === 'modern') setViewMode('classic');
-            else setViewMode('modern');
-          }}
-          className="flex items-center gap-2 px-3.5 py-2 bg-[#15173c] hover:bg-slate-900 text-white rounded-full shadow-xl border border-indigo-400/30 text-xs font-bold transition-all hover:scale-105 active:scale-95 group"
-          title="Toggle view"
-        >
-          <LayoutGrid className="w-4 h-4 text-amber-400 group-hover:rotate-12 transition-transform" />
-          <span>
-            {viewMode === 'classic' ? 'Modern AdaptIQ UI' : 'CodeTantra Classic'}
-          </span>
-        </button>
-      </div>
+      {studentProfile.role === 'student' && (
+        <div className="fixed bottom-5 right-5 z-40 flex items-center gap-2">
+          <button
+            onClick={() => setViewMode(viewMode === 'modern' ? 'classic' : 'modern')}
+            className="flex items-center gap-2 px-3.5 py-2 bg-[#15173c] hover:bg-slate-900 text-white rounded-full shadow-xl border border-indigo-400/30 text-xs font-bold transition-all hover:scale-105 active:scale-95 group"
+            title="Toggle student layout"
+          >
+            <LayoutGrid className="w-4 h-4 text-amber-400 group-hover:rotate-12 transition-transform" />
+            <span>{viewMode === 'classic' ? 'Modern AdaptIQ UI' : 'CodeTantra Classic'}</span>
+          </button>
+        </div>
+      )}
 
       {/* FIREBASE / RBAC AUTHENTICATION MODAL */}
       <AuthModal />

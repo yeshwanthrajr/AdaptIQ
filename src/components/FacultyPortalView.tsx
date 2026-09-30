@@ -26,10 +26,8 @@ import {
 } from 'lucide-react';
 
 export const FacultyPortalView: React.FC<{ 
-  onSwitchToStudent?: () => void;
   onOpenPracticeTest?: (note: FacultyNote) => void;
 }> = ({
-  onSwitchToStudent,
   onOpenPracticeTest,
 }) => {
   const { 
@@ -38,8 +36,7 @@ export const FacultyPortalView: React.FC<{
     uploadFacultyNote, 
     personalizeNoteWithAi,
     createAnnouncement,
-    allUsers,
-    loginAsDemoUser
+    allUsers
   } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'upload' | 'decomposed' | 'students' | 'announcements'>('upload');
@@ -210,24 +207,6 @@ The identity operator I guarantees uninterrupted gradient highway back to early 
             </div>
           </div>
 
-          {/* Quick Persona Switcher */}
-          <div className="flex items-center gap-2 bg-slate-900/60 p-1.5 rounded-xl border border-emerald-500/30">
-            <span className="text-[11px] text-slate-400 px-2 font-medium hidden lg:inline">Switch Persona:</span>
-            <button
-              onClick={() => loginAsDemoUser('student')}
-              className="px-3 py-1.5 rounded-lg bg-indigo-950/60 border border-indigo-500/30 hover:border-indigo-400 text-indigo-300 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-            >
-              <GraduationCap className="w-3.5 h-3.5" />
-              <span>Student View</span>
-            </button>
-            <button
-              onClick={() => loginAsDemoUser('admin')}
-              className="px-3 py-1.5 rounded-lg bg-amber-950/60 border border-amber-500/30 hover:border-amber-400 text-amber-300 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>Admin View</span>
-            </button>
-          </div>
         </div>
       </div>
 

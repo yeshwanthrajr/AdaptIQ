@@ -5,7 +5,6 @@ import {
   AlertCircle, 
   Send, 
   RefreshCw, 
-  Sparkles, 
   X, 
   ShieldAlert, 
   ShieldCheck, 
@@ -18,8 +17,7 @@ export const EmailVerificationBanner: React.FC = () => {
     currentUser, 
     studentProfile, 
     sendVerificationEmail, 
-    checkEmailVerificationStatus, 
-    simulateEmailVerification 
+    checkEmailVerificationStatus
   } = useAuth();
 
   const [isSending, setIsSending] = useState(false);
@@ -65,7 +63,7 @@ export const EmailVerificationBanner: React.FC = () => {
       } else {
         setFeedback({
           type: 'info',
-          message: 'Email not yet verified. Please click the verification link in your inbox or use "Instant Verification (Demo)".',
+          message: 'Email not yet verified. Please click the verification link in your inbox, then check again.',
         });
       }
     } catch (err: any) {
@@ -75,19 +73,6 @@ export const EmailVerificationBanner: React.FC = () => {
       });
     } finally {
       setIsChecking(false);
-    }
-  };
-
-  const handleSimulate = async () => {
-    setIsSending(true);
-    try {
-      await simulateEmailVerification();
-      setFeedback({
-        type: 'success',
-        message: 'Email marked as verified in Firebase Authentication & user profile.',
-      });
-    } finally {
-      setIsSending(false);
     }
   };
 
@@ -110,12 +95,6 @@ export const EmailVerificationBanner: React.FC = () => {
             className="text-xs font-bold text-amber-800 underline hover:text-amber-950 cursor-pointer"
           >
             Show Verification Prompt
-          </button>
-          <button
-            onClick={handleSimulate}
-            className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
-          >
-            Verify Now
           </button>
         </div>
       </div>
@@ -197,15 +176,6 @@ export const EmailVerificationBanner: React.FC = () => {
                 <span>Check Status</span>
               </button>
 
-              <button
-                id="btn-simulate-email-verification"
-                onClick={handleSimulate}
-                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-98"
-                title="Instantly marks this email as verified for testing without waiting for an email inbox"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                <span>Instant Verify (Demo Mode)</span>
-              </button>
             </div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { 
   auth, 
   db, 
@@ -6,6 +6,7 @@ import {
   signInWithPopup, 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
+  deleteUser,
   sendEmailVerification,
   reload,
   fbSignOut, 
@@ -47,13 +48,11 @@ interface AuthContextType {
   activityLogs: SystemActivityLog[];
 
   // Authentication & OTP
-  loginWithEmail: (email: string, pass: string) => Promise<void>;
-  signupWithEmail: (email: string, pass: string, name: string, dept?: string, institution?: string) => Promise<void>;
-  loginWithGoogle: () => Promise<void>;
+  loginWithEmail: (email: string, pass: string, expectedRole: UserRole) => Promise<void>;
+  loginWithGoogle: (expectedRole: UserRole) => Promise<void>;
   logout: () => Promise<void>;
-  loginAsDemoUser: (role: UserRole) => void;
-  sendEmailOtp: (email: string, mobile?: string) => { success: boolean; generatedOtp: string; message: string };
-  verifyEmailOtp: (email: string, enteredOtp: string) => boolean;
+  sendEmailOtp: (email: string) => Promise<{ success: boolean; message: string }>;
+  verifyEmailOtp: (email: string, enteredOtp: string) => Promise<boolean>;
   registerWithOtp: (params: {
     name: string;
     email: string;
@@ -68,12 +67,10 @@ interface AuthContextType {
   // Firebase Email Verification Flow
   sendVerificationEmail: () => Promise<{ success: boolean; message: string }>;
   checkEmailVerificationStatus: () => Promise<boolean>;
-  simulateEmailVerification: () => Promise<void>;
 
   // Admin Controls
   approveUser: (uid: string) => Promise<void>;
   rejectUser: (uid: string) => Promise<void>;
-  switchUserRole: (newRole: UserRole) => void;
 
   // Faculty Materials & AI Personalizer
   uploadFacultyNote: (note: Omit<FacultyNote, 'id' | 'uploadDate' | 'isAiPersonalized'>) => Promise<FacultyNote>;
@@ -99,6 +96,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [studentProfile, setStudentProfile] = useState<StudentProfile>(initialStudentProfile);
   const [loading, setLoading] = useState<boolean>(true);
+  const authActionInProgress = useRef(false);
   
   // RBAC Global State
   const [allUsers, setAllUsers] = useState<StudentProfile[]>(initialUsersList);
@@ -106,14 +104,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [announcements, setAnnouncements] = useState<Announcement[]>(initialAnnouncements);
   const [activityLogs, setActivityLogs] = useState<SystemActivityLog[]>(initialActivityLogs);
 
-  // Active OTP verification map: email -> { code, expiresAt }
-  const [activeOtps, setActiveOtps] = useState<Record<string, { code: string; expiresAt: number }>>({
-    'student@easwari.edu': { code: '482910', expiresAt: Date.now() + 1000 * 60 * 60 },
-    'prof.ramesh@easwari.edu': { code: '739201', expiresAt: Date.now() + 1000 * 60 * 60 },
-    'admin@easwari.edu': { code: '918234', expiresAt: Date.now() + 1000 * 60 * 60 },
-  });
-
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(true);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'signup' | 'role_select'>('login');
 
   const openAuthModal = (mode: 'login' | 'signup' | 'role_select' = 'login') => {
@@ -122,6 +113,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const closeAuthModal = () => {
+    if (!currentUser) return;
     setIsAuthModalOpen(false);
   };
 
@@ -134,168 +126,130 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setActivityLogs((prev) => [newLog, ...prev.slice(0, 49)]);
   };
 
-  // Sync user profile with Firestore
-  const syncUserProfile = async (user: User, fallbackName?: string, fallbackDept?: string, fallbackInst?: string) => {
-    try {
-      const userRef = doc(db, 'users', user.uid);
-      const snapshot = await getDoc(userRef);
+  const syncUserProfile = async (user: User): Promise<StudentProfile> => {
+    if (!user.email) throw new Error('The authenticated account did not provide an email address.');
 
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        const isVerified = Boolean(user.emailVerified || data.emailVerified || data.isEmailVerified);
-        const profile: StudentProfile = {
-          uid: user.uid,
-          name: data.name || user.displayName || fallbackName || 'Yashwanth Raj',
-          email: user.email || data.email || 'student@easwari.edu',
-          mobile: data.mobile || '+91 98403 45678',
-          role: (data.role as UserRole) || 'student',
-          status: (data.status as UserAccountStatus) || 'active',
-          institution: data.institution || 'Easwari Engineering College',
-          department: data.department || 'Computer Science and Engineering',
-          semester: data.semester || 'Semester 6',
-          designation: data.designation || 'Undergraduate Scholar',
-          rollOrEmpNumber: data.rollOrEmpNumber || '310621104089',
-          otpVerified: data.otpVerified ?? true,
-          emailVerified: isVerified,
-          emailVerificationSentAt: data.emailVerificationSentAt,
-          approvedAt: data.approvedAt,
-          approvedBy: data.approvedBy,
-          masteryIndex: typeof data.masteryIndex === 'number' ? data.masteryIndex : 84,
-          masteryDelta: typeof data.masteryDelta === 'number' ? data.masteryDelta : 6,
-          paceFactor: typeof data.paceFactor === 'number' ? data.paceFactor : 2.6,
-          paceDescription: data.paceDescription || 'Optimal load calibration sustained',
-          primaryStyle: data.primaryStyle || 'Interactive Labs',
-          primaryStyleStat: data.primaryStyleStat || '68% of sessions (Cloud IDE)',
-          bloomTier: data.bloomTier || 'L4 • Synthesis',
-          bloomTierNote: data.bloomTierNote || 'Top 4% of engineering cohort',
-          lastRecalibrated: data.lastRecalibrated || 'Just now',
-          earnedBadgeIds: data.earnedBadgeIds || ['badge-bloom-l4', 'badge-hyper-pace'],
-          totalXp: typeof data.totalXp === 'number' ? data.totalXp : 800,
-          studyPlannerTasks: data.studyPlannerTasks || undefined,
-        };
+    const response = await fetch('/api/users');
+    if (!response.ok) throw new Error('Unable to verify your institutional account. Try again later.');
+    const data = await response.json();
+    const account = (data.users as StudentProfile[] | undefined)?.find(
+      (profile) => profile.email.toLowerCase() === user.email!.toLowerCase()
+    );
 
-        // If Firebase Auth confirms verification but Firestore didn't have it yet, update Firestore
-        if (user.emailVerified && !data.emailVerified) {
-          try {
-            await updateDoc(userRef, {
-              emailVerified: true,
-              isEmailVerified: true,
-              emailVerifiedAt: serverTimestamp(),
-            });
-          } catch (e) {
-            console.warn('Could not sync emailVerified to Firestore:', e);
-          }
-        }
-
-        setStudentProfile(profile);
-
-        // Update in allUsers list
-        setAllUsers((prev) => {
-          const index = prev.findIndex((u) => u.email === profile.email || u.uid === profile.uid);
-          if (index >= 0) {
-            const next = [...prev];
-            next[index] = profile;
-            return next;
-          }
-          return [profile, ...prev];
-        });
-      } else {
-        // Initialize new user profile
-        const isVerified = Boolean(user.emailVerified);
-        const newProfile: StudentProfile = {
-          uid: user.uid,
-          name: user.displayName || fallbackName || (user.email ? user.email.split('@')[0] : 'Engineering Student'),
-          email: user.email || 'student@easwari.edu',
-          mobile: '+91 98403 45678',
-          role: 'student',
-          status: 'active',
-          institution: fallbackInst || 'Easwari Engineering College',
-          department: fallbackDept || 'Computer Science and Engineering',
-          semester: 'Semester 6',
-          designation: 'Undergraduate Scholar',
-          rollOrEmpNumber: '310621104089',
-          otpVerified: true,
-          emailVerified: isVerified,
-          emailVerificationSentAt: new Date().toISOString(),
-          masteryIndex: 84,
-          masteryDelta: 6,
-          paceFactor: 2.6,
-          paceDescription: 'Optimal load calibration sustained',
-          primaryStyle: 'Interactive Labs',
-          primaryStyleStat: '68% of sessions (Cloud IDE)',
-          bloomTier: 'L4 • Synthesis',
-          bloomTierNote: 'Top 4% of engineering cohort',
-          lastRecalibrated: 'Just now',
-          earnedBadgeIds: ['badge-bloom-l4', 'badge-hyper-pace'],
-          totalXp: 800,
-        };
-
-        await setDoc(userRef, {
-          ...newProfile,
-          emailVerified: isVerified,
-          isEmailVerified: isVerified,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-
-        setStudentProfile(newProfile);
-        setAllUsers((prev) => [newProfile, ...prev]);
-      }
-    } catch (err) {
-      console.error('Error syncing user profile with Firestore:', err);
+    if (!account) throw new Error('No registered institutional account matches this email. Contact your administrator.');
+    if (account.status !== 'active') {
+      throw new Error(account.status === 'pending_approval'
+        ? 'Your account is awaiting administrator approval.'
+        : 'This account is not active. Contact your administrator.');
     }
+    if (!account.emailVerified && !user.emailVerified) {
+      throw new Error('Verify this email address before signing in.');
+    }
+
+    const profile = { ...account, emailVerified: Boolean(account.emailVerified || user.emailVerified) };
+    setStudentProfile(profile);
+    setAllUsers((previous) => previous.map((item) => item.email.toLowerCase() === profile.email.toLowerCase() ? profile : item));
+
+    try {
+      await setDoc(doc(db, 'users', user.uid), {
+        email: profile.email,
+        name: profile.name,
+        role: profile.role,
+        status: profile.status,
+        emailVerified: profile.emailVerified,
+        isEmailVerified: profile.emailVerified,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    } catch (err) {
+      console.warn('Firestore profile sync notice:', err);
+    }
+
+    return profile;
   };
+
+  // Load full state from persistent SQLite database on mount
+  useEffect(() => {
+    const fetchDatabaseState = async () => {
+      try {
+        const [usersRes, notesRes, annRes, logsRes] = await Promise.all([
+          fetch('/api/users').then((r) => r.json()).catch(() => null),
+          fetch('/api/faculty/notes').then((r) => r.json()).catch(() => null),
+          fetch('/api/announcements').then((r) => r.json()).catch(() => null),
+          fetch('/api/activity-logs').then((r) => r.json()).catch(() => null),
+        ]);
+
+        if (usersRes?.success && usersRes.users?.length > 0) {
+          setAllUsers(usersRes.users);
+        }
+        if (notesRes?.success && notesRes.notes) {
+          setFacultyNotes(notesRes.notes);
+        }
+        if (annRes?.success && annRes.announcements) {
+          setAnnouncements(annRes.announcements);
+        }
+        if (logsRes?.success && logsRes.activityLogs) {
+          setActivityLogs(logsRes.activityLogs);
+        }
+      } catch (err) {
+        console.warn('Backend SQLite sync notice (using defaults):', err);
+      }
+    };
+
+    fetchDatabaseState();
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setCurrentUser(user);
-      if (user) {
-        await syncUserProfile(user);
+      if (authActionInProgress.current) return;
+      if (!user) {
+        setCurrentUser(null);
+        setStudentProfile(initialStudentProfile);
+        setIsAuthModalOpen(true);
+        setLoading(false);
+        return;
       }
-      setLoading(false);
+
+      setLoading(true);
+      try {
+        const profile = await syncUserProfile(user);
+        setStudentProfile(profile);
+        setCurrentUser(user);
+        setIsAuthModalOpen(false);
+      } catch (err) {
+        console.warn('Rejected restored authentication session:', err);
+        await fbSignOut(auth);
+        setCurrentUser(null);
+        setStudentProfile(initialStudentProfile);
+        setIsAuthModalOpen(true);
+      } finally {
+        setLoading(false);
+      }
     });
 
     return () => unsubscribe();
   }, []);
 
-  // Send Email / Mobile OTP
-  const sendEmailOtp = (email: string, mobile?: string) => {
-    // Generate secure 6-digit code
-    const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
-
-    setActiveOtps((prev) => ({
-      ...prev,
-      [email.toLowerCase()]: { code: generatedOtp, expiresAt },
-    }));
-
-    addActivityLog({
-      userName: email.split('@')[0],
-      userEmail: email,
-      userRole: 'student',
-      action: `OTP verification code dispatched to email (${email}) and mobile (${mobile || 'SMS Gateway'})`,
-      deviceInfo: navigator.userAgent,
-      status: 'SUCCESS',
+  const sendEmailOtp = async (email: string) => {
+    const response = await fetch('/api/auth/send-otp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
     });
-
-    return {
-      success: true,
-      generatedOtp,
-      message: `A 6-digit verification OTP has been sent to ${email}. Valid for 5 minutes.`,
-    };
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Unable to send a verification code.');
+    return result as { success: boolean; message: string };
   };
 
-  // Verify OTP
-  const verifyEmailOtp = (email: string, enteredOtp: string) => {
-    const record = activeOtps[email.toLowerCase()];
-    // Allow master demo bypass "123456" or actual generated code
-    if (enteredOtp === '123456' || (record && record.code === enteredOtp.trim())) {
-      return true;
-    }
-    return false;
+  const verifyEmailOtp = async (email: string, enteredOtp: string) => {
+    const response = await fetch('/api/auth/verify-otp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, code: enteredOtp }),
+    });
+    return response.ok;
   };
 
-  // Register with OTP, Firebase email verification, and admin approval routing
+  // Register with server-verified OTP and administrator approval routing
   const registerWithOtp = async (params: {
     name: string;
     email: string;
@@ -306,111 +260,104 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     rollOrEmpNumber: string;
     password?: string;
   }) => {
+    if (!params.password || params.password.length < 8) {
+      throw new Error('Choose a password with at least 8 characters.');
+    }
+
+    authActionInProgress.current = true;
     let firebaseUser: User | null = null;
-    let emailVerificationDispatched = false;
-
-    // If password provided (or standard default), create Firebase Auth user and trigger email verification
-    const passwordToUse = params.password && params.password.length >= 6 ? params.password : 'Academic@123';
     try {
-      const cred = await createUserWithEmailAndPassword(auth, params.email.trim(), passwordToUse);
+      const cred = await createUserWithEmailAndPassword(auth, params.email.trim(), params.password);
       firebaseUser = cred.user;
-      if (params.name) {
-        await updateProfile(cred.user, { displayName: params.name });
+      const token = await cred.user.getIdToken();
+      const dbResp = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          uid: cred.user.uid,
+          name: params.name,
+          email: params.email,
+          mobile: params.mobile,
+          role: params.role,
+          department: params.department,
+          designationOrSemester: params.designationOrSemester,
+          rollOrEmpNumber: params.rollOrEmpNumber,
+        }),
+      });
+      const dbData = await dbResp.json();
+      if (!dbResp.ok || !dbData.user) {
+        throw new Error(dbData.error || 'The account could not be registered. Please try again.');
       }
-      await sendEmailVerification(cred.user);
-      emailVerificationDispatched = true;
-    } catch (authErr: any) {
-      console.warn('Firebase Auth user creation note (e.g. existing email or simulation):', authErr.message);
-      // If user already exists or offline, proceed gracefully
-    }
 
-    const newUid = firebaseUser ? firebaseUser.uid : `user-${Date.now()}`;
-    const requiresApproval = true; // Institutional policy requires administrator authorization
+      const newUserProfile = dbData.user as StudentProfile;
+      await updateProfile(cred.user, { displayName: params.name });
+      setAllUsers((previous) => [newUserProfile, ...previous.filter((item) => item.email.toLowerCase() !== newUserProfile.email.toLowerCase())]);
 
-    const newUserProfile: StudentProfile = {
-      uid: newUid,
-      name: params.name,
-      email: params.email.toLowerCase(),
-      mobile: params.mobile,
-      role: params.role,
-      status: requiresApproval ? 'pending_approval' : 'active',
-      institution: 'Easwari Engineering College',
-      department: params.department,
-      semester: params.role === 'student' ? params.designationOrSemester : 'Faculty',
-      designation: params.designationOrSemester,
-      rollOrEmpNumber: params.rollOrEmpNumber,
-      otpVerified: true,
-      emailVerified: false,
-      emailVerificationSentAt: new Date().toISOString(),
-      createdAt: new Date().toISOString().split('T')[0],
-      masteryIndex: params.role === 'student' ? 70 : 92,
-      masteryDelta: 0,
-      paceFactor: 1.0,
-      paceDescription: 'Initial calibration in progress',
-      primaryStyle: params.role === 'faculty' ? 'Lecture & Lab Notes' : 'Adaptive Learning',
-      primaryStyleStat: 'New Member',
-      bloomTier: params.role === 'admin' ? 'L6 • Policy' : params.role === 'faculty' ? 'L5 • Synthesis' : 'L2 • Comprehension',
-      bloomTierNote: 'Pending diagnostic calibration',
-      lastRecalibrated: 'Awaiting Assessment',
-      totalXp: params.role === 'faculty' ? 1000 : 0,
-    };
+      try {
+        await setDoc(doc(db, 'users', cred.user.uid), {
+          uid: cred.user.uid,
+          email: newUserProfile.email,
+          name: newUserProfile.name,
+          role: newUserProfile.role,
+          status: newUserProfile.status,
+          otpVerified: true,
+          emailVerified: true,
+          isEmailVerified: true,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        console.warn('Firestore profile sync notice:', err);
+      }
 
-    // Save to all users state
-    setAllUsers((prev) => [newUserProfile, ...prev]);
-
-    // Save to Firestore user document with verification status flag
-    try {
-      const userRef = doc(db, 'users', newUid);
-      await setDoc(userRef, {
-        ...newUserProfile,
-        isEmailVerified: false,
-        emailVerified: false,
-        emailVerificationSentAt: serverTimestamp(),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    } catch (err) {
-      console.warn('Firestore offline or permission pending, stored locally:', err);
-    }
-
-    // Log the event for Admin Dashboard
-    addActivityLog({
-      userName: params.name,
-      userEmail: params.email,
-      userRole: params.role,
-      action: `New ${params.role.toUpperCase()} registered: OTP verified & Firebase Email Verification dispatched to ${params.email}. Status: Awaiting Admin Approval.`,
-      deviceInfo: navigator.userAgent,
-      status: 'PENDING',
-    });
-
-    return {
-      success: true,
-      message: `Registration successful! Verification email dispatched to ${params.email}. Account submitted for Administrator approval.`,
-      requiresApproval: true,
-    };
-  };
-
-  // Instant Demo Switcher for fast evaluator review
-  const loginAsDemoUser = (role: UserRole) => {
-    const target = allUsers.find((u) => u.role === role && u.status === 'active') || 
-                   initialUsersList.find((u) => u.role === role);
-
-    if (target) {
-      setStudentProfile(target);
       addActivityLog({
-        userName: target.name,
-        userEmail: target.email,
-        userRole: target.role,
-        action: `Switched active session to ${target.role.toUpperCase()} persona (${target.name})`,
+        userName: params.name,
+        userEmail: params.email,
+        userRole: params.role,
+        action: `New ${params.role.toUpperCase()} registered after email OTP verification. Status: Awaiting Administrator approval.`,
         deviceInfo: navigator.userAgent,
-        status: 'SUCCESS',
+        status: 'PENDING',
       });
-      closeAuthModal();
+
+      try {
+        await fbSignOut(auth);
+      } catch (err) {
+        console.warn('Could not clear the temporary registration session:', err);
+      }
+      setCurrentUser(null);
+      setStudentProfile(initialStudentProfile);
+
+      return {
+        success: true,
+        message: `Email verified. Your ${params.role} account is awaiting administrator approval.`,
+        requiresApproval: true,
+      };
+    } catch (err) {
+      if (firebaseUser && auth.currentUser) {
+        try {
+          await deleteUser(auth.currentUser);
+        } catch (deleteErr) {
+          console.warn('Could not remove the incomplete Firebase account:', deleteErr);
+          await fbSignOut(auth);
+        }
+      }
+      throw err;
+    } finally {
+      authActionInProgress.current = false;
     }
   };
 
   // Approve Pending User (Admin only)
   const approveUser = async (uid: string) => {
+    if (!currentUser) throw new Error('Sign in with an administrator account to approve users.');
+    const token = await currentUser.getIdToken();
+    const response = await fetch(`/api/admin/users/${uid}/approve`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Unable to approve this account.');
+
     setAllUsers((prev) =>
       prev.map((user) => {
         if (user.uid === uid) {
@@ -455,6 +402,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Reject / Revoke User
   const rejectUser = async (uid: string) => {
+    if (!currentUser) throw new Error('Sign in with an administrator account to reject users.');
+    const token = await currentUser.getIdToken();
+    const response = await fetch(`/api/admin/users/${uid}/reject`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Unable to reject this account.');
+
     setAllUsers((prev) =>
       prev.map((user) =>
         user.uid === uid ? { ...user, status: 'rejected' } : user
@@ -470,63 +426,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const switchUserRole = (newRole: UserRole) => {
-    loginAsDemoUser(newRole);
-  };
-
-  const loginWithEmail = async (email: string, pass: string) => {
-    // Check if account is in allUsers with pending approval
-    const existing = allUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
-    if (existing && existing.status === 'pending_approval') {
-      throw new Error(`Your ${existing.role} registration is pending Academic Administrator approval. Please check back shortly.`);
-    }
-
+  const loginWithEmail = async (email: string, pass: string, expectedRole: UserRole) => {
+    authActionInProgress.current = true;
     try {
       const cred = await signInWithEmailAndPassword(auth, email, pass);
-      await syncUserProfile(cred.user);
-    } catch {
-      // If Firebase Auth fails, check mock list for smooth testing
-      if (existing) {
-        setStudentProfile(existing);
-      } else {
-        throw new Error('Invalid email or password. You can also use the Quick Role Demo buttons.');
+      const profile = await syncUserProfile(cred.user);
+      if (profile.role !== expectedRole) {
+        throw new Error(`This account belongs to the ${profile.role} portal. Select that portal to continue.`);
       }
+      setStudentProfile(profile);
+      setCurrentUser(cred.user);
+      setIsAuthModalOpen(false);
+    } catch (err) {
+      if (auth.currentUser) await fbSignOut(auth);
+      setCurrentUser(null);
+      setStudentProfile(initialStudentProfile);
+      throw err;
+    } finally {
+      authActionInProgress.current = false;
     }
-    closeAuthModal();
   };
 
-  const signupWithEmail = async (
-    email: string, 
-    pass: string, 
-    name: string, 
-    dept?: string, 
-    institution?: string
-  ) => {
-    const cred = await createUserWithEmailAndPassword(auth, email, pass);
-    if (name) {
-      await updateProfile(cred.user, { displayName: name });
-    }
-    // Dispatched Firebase email verification link
+  const loginWithGoogle = async (expectedRole: UserRole) => {
+    authActionInProgress.current = true;
     try {
-      await sendEmailVerification(cred.user);
-    } catch (verifErr: any) {
-      console.warn('sendEmailVerification notification:', verifErr?.message);
+      const cred = await signInWithPopup(auth, googleProvider);
+      if (!cred.user.emailVerified) throw new Error('Google did not confirm this email address as verified.');
+      const profile = await syncUserProfile(cred.user);
+      if (profile.role !== expectedRole) {
+        throw new Error(`This Google account belongs to the ${profile.role} portal.`);
+      }
+      setStudentProfile(profile);
+      setCurrentUser(cred.user);
+      setIsAuthModalOpen(false);
+    } catch (err) {
+      if (auth.currentUser) await fbSignOut(auth);
+      setCurrentUser(null);
+      setStudentProfile(initialStudentProfile);
+      const firebaseCode = (err as { code?: string } | null)?.code;
+      if (firebaseCode === 'auth/unauthorized-domain') {
+        throw new Error('Google sign-in is blocked for this site. In Firebase Console, open Authentication > Settings > Authorized domains and add localhost (and your deployed hostname, if applicable).');
+      }
+      if (firebaseCode === 'auth/operation-not-allowed') {
+        throw new Error('Google sign-in is disabled for this Firebase project. Enable the Google provider in Firebase Console > Authentication > Sign-in method.');
+      }
+      if (firebaseCode === 'auth/popup-blocked') {
+        throw new Error('Your browser blocked the Google sign-in popup. Allow popups for this site and try again.');
+      }
+      if (firebaseCode === 'auth/popup-closed-by-user') {
+        throw new Error('The Google sign-in window was closed before sign-in finished. Try again and complete the Google prompt.');
+      }
+      throw err;
+    } finally {
+      authActionInProgress.current = false;
     }
-    await syncUserProfile(cred.user, name, dept, institution);
-    addActivityLog({
-      userName: name || email.split('@')[0],
-      userEmail: email,
-      userRole: 'student',
-      action: `Created new Firebase account with email verification dispatched to ${email}.`,
-      status: 'PENDING',
-    });
-    closeAuthModal();
-  };
-
-  const loginWithGoogle = async () => {
-    const cred = await signInWithPopup(auth, googleProvider);
-    await syncUserProfile(cred.user);
-    closeAuthModal();
   };
 
   const logout = async () => {
@@ -537,6 +490,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     setCurrentUser(null);
     setStudentProfile(initialStudentProfile);
+    setIsAuthModalOpen(true);
   };
 
   // 1. Send / Resend Firebase Email Verification link
@@ -603,14 +557,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // 2. Check if user clicked email verification link (via reload)
   const checkEmailVerificationStatus = async (): Promise<boolean> => {
-    const uid = currentUser?.uid || studentProfile.uid;
-    const email = currentUser?.email || studentProfile.email;
-
     if (currentUser) {
       try {
         await reload(currentUser);
         if (currentUser.emailVerified) {
-          await simulateEmailVerification();
+          setStudentProfile((profile) => ({ ...profile, emailVerified: true }));
           return true;
         }
       } catch (err) {
@@ -618,67 +569,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // Check if Firestore already has it marked as verified
-    if (uid) {
-      try {
-        const userRef = doc(db, 'users', uid);
-        const snap = await getDoc(userRef);
-        if (snap.exists() && (snap.data().emailVerified || snap.data().isEmailVerified)) {
-          setStudentProfile((prev) => ({ ...prev, emailVerified: true }));
-          return true;
-        }
-      } catch (e) {
-        // ignore
-      }
-    }
-
     return studentProfile.emailVerified ?? false;
-  };
-
-  // 3. Mark email as verified (called when verified or in demo simulation)
-  const simulateEmailVerification = async () => {
-    const uid = currentUser?.uid || studentProfile.uid;
-    const email = currentUser?.email || studentProfile.email;
-
-    setStudentProfile((prev) => ({
-      ...prev,
-      emailVerified: true,
-    }));
-
-    setAllUsers((prev) =>
-      prev.map((u) =>
-        (uid && u.uid === uid) || (email && u.email.toLowerCase() === email.toLowerCase())
-          ? { ...u, emailVerified: true }
-          : u
-      )
-    );
-
-    if (uid) {
-      try {
-        const userRef = doc(db, 'users', uid);
-        await updateDoc(userRef, {
-          emailVerified: true,
-          isEmailVerified: true,
-          emailVerifiedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        console.warn('Firestore update for emailVerified:', err);
-      }
-    }
-
-    addActivityLog({
-      userName: studentProfile.name,
-      userEmail: email,
-      userRole: studentProfile.role,
-      action: `Email verification confirmed for ${email}. User document updated with emailVerified: true.`,
-      deviceInfo: navigator.userAgent,
-      status: 'SUCCESS',
-    });
   };
 
   const updateStudentData = async (updates: Partial<StudentProfile>) => {
     setStudentProfile((prev) => ({ ...prev, ...updates }));
+
+    const uid = studentProfile.uid || currentUser?.uid;
+    if (uid) {
+      try {
+        await fetch(`/api/users/${uid}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates),
+        });
+      } catch (err) {
+        console.warn('Backend SQLite update notice:', err);
+      }
+    }
 
     if (currentUser) {
       try {
@@ -688,19 +596,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updatedAt: serverTimestamp(),
         });
       } catch (err) {
-        console.error('Error updating student data in Firestore:', err);
+        console.warn('Firestore update note:', err);
       }
     }
   };
 
   // Upload Faculty Note
   const uploadFacultyNote = async (note: Omit<FacultyNote, 'id' | 'uploadDate' | 'isAiPersonalized'>): Promise<FacultyNote> => {
-    const newNote: FacultyNote = {
+    let newNote: FacultyNote = {
       ...note,
       id: `note-${Date.now()}`,
       uploadDate: new Date().toISOString().split('T')[0],
       isAiPersonalized: false,
     };
+
+    try {
+      const resp = await fetch('/api/faculty/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newNote),
+      });
+      const data = await resp.json();
+      if (data.note) {
+        newNote = data.note;
+      }
+    } catch (e) {
+      console.warn('Backend SQLite faculty note persistence notice:', e);
+    }
 
     setFacultyNotes((prev) => [newNote, ...prev]);
 
@@ -803,19 +725,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         announcements,
         activityLogs,
         loginWithEmail,
-        signupWithEmail,
         loginWithGoogle,
         logout,
-        loginAsDemoUser,
         sendEmailOtp,
         verifyEmailOtp,
         registerWithOtp,
         sendVerificationEmail,
         checkEmailVerificationStatus,
-        simulateEmailVerification,
         approveUser,
         rejectUser,
-        switchUserRole,
         uploadFacultyNote,
         personalizeNoteWithAi,
         createAnnouncement,

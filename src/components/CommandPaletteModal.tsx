@@ -47,7 +47,7 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
     { title: 'Courses & Curriculum Modules', desc: 'Deep Learning, Compilers, Distributed Systems', icon: BookOpen, action: () => onSelectAction('courses') },
     { title: 'Scheduled Tests & Exams (DL Midterm II)', desc: 'Exam syllabus, mock tests, and historical scores', icon: FileCheck2, action: () => onSelectAction('tests') },
     { title: 'Faculty Mentorship & 24/7 AI Tutor', desc: 'Consult Dr. K. Ramesh or ask the AI Tutor questions', icon: Bot, action: () => onSelectAction('mentorship') },
-    { title: `Switch Portal: ${viewMode === 'modern' ? 'Classic CodeTantra View' : 'Modern AdaptIQ LMS'}`, desc: 'Toggle between the two portal styles from images', icon: ArrowRight, action: () => { onToggleViewMode(); onClose(); } },
+    { title: `Switch student layout: ${viewMode === 'modern' ? 'Classic CodeTantra View' : 'Modern AdaptIQ LMS'}`, desc: 'Change the layout of the current student portal', icon: ArrowRight, action: () => { onToggleViewMode(); onClose(); } },
   ];
 
   const filtered = allItems.filter(

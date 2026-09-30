@@ -22,10 +22,7 @@ import {
 } from 'lucide-react';
 import { UserRole } from '../types';
 
-export const AdminDashboardView: React.FC<{ onSwitchToFaculty?: () => void; onSwitchToStudent?: () => void }> = ({
-  onSwitchToFaculty,
-  onSwitchToStudent
-}) => {
+export const AdminDashboardView: React.FC = () => {
   const { 
     studentProfile, 
     allUsers, 
@@ -33,8 +30,7 @@ export const AdminDashboardView: React.FC<{ onSwitchToFaculty?: () => void; onSw
     announcements, 
     approveUser, 
     rejectUser, 
-    createAnnouncement,
-    loginAsDemoUser 
+    createAnnouncement
   } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'overview' | 'approvals' | 'cohort' | 'audit' | 'announcements'>('overview');
@@ -111,24 +107,6 @@ export const AdminDashboardView: React.FC<{ onSwitchToFaculty?: () => void; onSw
             </div>
           </div>
 
-          {/* Quick Persona Jump */}
-          <div className="flex items-center gap-2 bg-slate-900/60 p-1.5 rounded-xl border border-slate-700/60">
-            <span className="text-[11px] text-slate-400 px-2 font-medium hidden lg:inline">Switch Portal:</span>
-            <button
-              onClick={() => loginAsDemoUser('faculty')}
-              className="px-3 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-500/30 hover:border-emerald-400 text-emerald-300 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-            >
-              <Briefcase className="w-3.5 h-3.5" />
-              <span>Faculty Portal</span>
-            </button>
-            <button
-              onClick={() => loginAsDemoUser('student')}
-              className="px-3 py-1.5 rounded-lg bg-indigo-950/60 border border-indigo-500/30 hover:border-indigo-400 text-indigo-300 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-            >
-              <GraduationCap className="w-3.5 h-3.5" />
-              <span>Student Portal</span>
-            </button>
-          </div>
         </div>
       </div>
 

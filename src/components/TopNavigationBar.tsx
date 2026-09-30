@@ -14,7 +14,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   LogOut,
-  LogIn,
   UserPlus,
   ShieldCheck,
   Briefcase,
@@ -42,19 +41,14 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const { 
-    currentUser, 
     studentProfile, 
     logout, 
-    openAuthModal, 
-    loginAsDemoUser,
-    announcements,
-    allUsers 
+    announcements
   } = useAuth();
 
   const displayName = studentProfile.name || 'Yashwanth Raj';
   const displayEmail = studentProfile.email || 'student@easwari.edu';
   const userRole = studentProfile.role || 'student';
-  const pendingCount = allUsers.filter((u) => u.status === 'pending_approval').length;
 
   const initials = displayName
     .split(' ')
@@ -112,57 +106,6 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
                 <span>{userRole}</span>
               </span>
             </div>
-          </div>
-
-          {/* Quick 1-Click Role Switcher for Test Evaluators */}
-          <div className="hidden md:flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
-            <button
-              onClick={() => {
-                loginAsDemoUser('student');
-                setViewMode('modern');
-              }}
-              className={`px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 transition-all ${
-                userRole === 'student' && viewMode === 'modern'
-                  ? 'bg-indigo-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-indigo-600 hover:bg-white/80'
-              }`}
-            >
-              <GraduationCap className="w-3.5 h-3.5" />
-              <span>Student</span>
-            </button>
-
-            <button
-              onClick={() => {
-                loginAsDemoUser('faculty');
-                setViewMode('faculty');
-              }}
-              className={`px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 transition-all ${
-                userRole === 'faculty' || viewMode === 'faculty'
-                  ? 'bg-emerald-700 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-emerald-700 hover:bg-white/80'
-              }`}
-            >
-              <Briefcase className="w-3.5 h-3.5" />
-              <span>Faculty</span>
-            </button>
-
-            <button
-              onClick={() => {
-                loginAsDemoUser('admin');
-                setViewMode('admin');
-              }}
-              className={`px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 transition-all relative ${
-                userRole === 'admin' || viewMode === 'admin'
-                  ? 'bg-amber-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-amber-700 hover:bg-white/80'
-              }`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Admin</span>
-              {pendingCount > 0 && (
-                <span className="w-2 h-2 rounded-full bg-rose-500 absolute -top-0.5 -right-0.5 ring-2 ring-white"></span>
-              )}
-            </button>
           </div>
 
           {/* Center Section: Primary Navigation Links */}
@@ -349,56 +292,17 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
                     )}
                   </div>
                   
-                  {/* View Switching Links */}
+                  {/* The classic view is another layout for the current student role. */}
                   <div className="space-y-1 text-xs">
-                    <button 
-                      onClick={() => { setShowProfileMenu(false); setViewMode('modern'); }}
-                      className={`w-full text-left px-3 py-1.5 rounded-lg font-semibold flex items-center justify-between ${
-                        viewMode === 'modern' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-700 hover:bg-slate-100'
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        <GraduationCap className="w-3.5 h-3.5 text-indigo-600" />
-                        <span>Student Adaptive Dashboard</span>
-                      </span>
-                    </button>
-
-                    <button 
-                      onClick={() => { setShowProfileMenu(false); setViewMode('faculty'); }}
-                      className={`w-full text-left px-3 py-1.5 rounded-lg font-semibold flex items-center justify-between ${
-                        viewMode === 'faculty' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-700 hover:bg-slate-100'
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        <Briefcase className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Faculty Courseware &amp; AI Studio</span>
-                      </span>
-                    </button>
-
-                    <button 
-                      onClick={() => { setShowProfileMenu(false); setViewMode('admin'); }}
-                      className={`w-full text-left px-3 py-1.5 rounded-lg font-semibold flex items-center justify-between ${
-                        viewMode === 'admin' ? 'bg-amber-50 text-amber-700' : 'text-slate-700 hover:bg-slate-100'
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-                        <span>Academic Admin Governance</span>
-                      </span>
-                      {pendingCount > 0 && (
-                        <span className="text-[10px] bg-amber-500 text-white px-1.5 py-0.2 rounded-full font-black">
-                          {pendingCount}
-                        </span>
-                      )}
-                    </button>
-
-                    <button 
-                      onClick={() => { setShowProfileMenu(false); setViewMode(viewMode === 'classic' ? 'modern' : 'classic'); }}
-                      className="w-full text-left px-3 py-1.5 rounded-lg font-medium text-slate-600 hover:bg-slate-100 flex items-center gap-2"
-                    >
-                      <ArrowRightLeft className="w-3.5 h-3.5 text-slate-500" />
-                      <span>{viewMode === 'classic' ? 'Switch to Modern UI' : 'CodeTantra Classic Portal'}</span>
-                    </button>
+                    {userRole === 'student' && (
+                      <button
+                        onClick={() => { setShowProfileMenu(false); setViewMode(viewMode === 'classic' ? 'modern' : 'classic'); }}
+                        className="w-full text-left px-3 py-1.5 rounded-lg font-medium text-slate-600 hover:bg-slate-100 flex items-center gap-2"
+                      >
+                        <ArrowRightLeft className="w-3.5 h-3.5 text-slate-500" />
+                        <span>{viewMode === 'classic' ? 'Switch to Modern UI' : 'CodeTantra Classic Portal'}</span>
+                      </button>
+                    )}
                   </div>
 
                   <div className="border-t border-slate-100 my-1.5"></div>
@@ -429,22 +333,13 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
 
                   <div className="border-t border-slate-100 my-1.5"></div>
 
-                  <div className="flex items-center justify-between px-1">
-                    <button 
-                      onClick={() => { setShowProfileMenu(false); openAuthModal('signup'); }}
-                      className="text-xs text-indigo-600 hover:underline font-bold"
-                    >
-                      + Register Role
-                    </button>
-
-                    <button 
-                      onClick={async () => { setShowProfileMenu(false); await logout(); }}
-                      className="text-xs text-rose-600 hover:underline font-semibold flex items-center gap-1"
-                    >
-                      <LogOut className="w-3.5 h-3.5" />
-                      <span>Sign Out</span>
-                    </button>
-                  </div>
+                  <button 
+                    onClick={async () => { setShowProfileMenu(false); await logout(); }}
+                    className="w-full px-1 text-left text-xs text-rose-600 hover:underline font-semibold flex items-center gap-1"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Sign Out</span>
+                  </button>
                 </div>
               )}
             </div>

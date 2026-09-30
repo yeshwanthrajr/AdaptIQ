@@ -24,23 +24,21 @@ import {
 
 export const AuthModal: React.FC = () => {
   const { 
+    currentUser,
     isAuthModalOpen, 
     closeAuthModal, 
     authModalMode, 
     loginWithEmail, 
     loginWithGoogle,
-    loginAsDemoUser,
     sendEmailOtp,
     verifyEmailOtp,
     registerWithOtp,
-    sendVerificationEmail,
-    checkEmailVerificationStatus,
-    simulateEmailVerification,
-    studentProfile
+    checkEmailVerificationStatus
   } = useAuth();
 
   const [mode, setMode] = useState<'login' | 'signup' | 'role_select'>('login');
   const [selectedRole, setSelectedRole] = useState<UserRole>('student');
+  const [loginRole, setLoginRole] = useState<UserRole>('student');
 
   // Login inputs
   const [loginEmail, setLoginEmail] = useState('');
@@ -58,7 +56,6 @@ export const AuthModal: React.FC = () => {
 
   // OTP Verification state
   const [otpStep, setOtpStep] = useState<'details' | 'verify_otp' | 'awaiting_approval'>('details');
-  const [generatedOtpHint, setGeneratedOtpHint] = useState<string | null>(null);
   const [enteredOtp, setEnteredOtp] = useState('');
   const [otpSentMessage, setOtpSentMessage] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<number>(300);
@@ -101,7 +98,7 @@ export const AuthModal: React.FC = () => {
       if (!loginEmail.trim() || !loginPassword.trim()) {
         throw new Error('Please enter both email and password.');
       }
-      await loginWithEmail(loginEmail.trim(), loginPassword);
+      await loginWithEmail(loginEmail.trim(), loginPassword, loginRole);
       setSuccessMsg('Successfully authenticated!');
     } catch (err: any) {
       setErrorMsg(err.message || 'Authentication failed. Please verify credentials.');
@@ -110,8 +107,20 @@ export const AuthModal: React.FC = () => {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    setErrorMsg(null);
+    setSubmitting(true);
+    try {
+      await loginWithGoogle(loginRole);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Google sign-in failed. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   // Step 1: Send OTP for Registration
-  const handleSendOtp = (e: React.FormEvent) => {
+  const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -126,12 +135,23 @@ export const AuthModal: React.FC = () => {
       return;
     }
 
-    const res = sendEmailOtp(regEmail.trim(), regMobile.trim());
-    setGeneratedOtpHint(res.generatedOtp);
-    setOtpSentMessage(res.message);
-    setEnteredOtp(res.generatedOtp); // Prefill for easy testing
-    setCountdown(300);
-    setOtpStep('verify_otp');
+    if (regPassword.length < 8) {
+      setErrorMsg('Choose a password with at least 8 characters.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await sendEmailOtp(regEmail.trim());
+      setOtpSentMessage(res.message);
+      setEnteredOtp('');
+      setCountdown(300);
+      setOtpStep('verify_otp');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Unable to send the verification code.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   // Step 2: Verify OTP and Register Account
@@ -142,7 +162,7 @@ export const AuthModal: React.FC = () => {
     setSubmitting(true);
 
     try {
-      const isValid = verifyEmailOtp(regEmail, enteredOtp);
+      const isValid = await verifyEmailOtp(regEmail, enteredOtp);
       if (!isValid) {
         throw new Error('Invalid OTP. Please check the 6-digit code sent to your email.');
       }
@@ -180,7 +200,7 @@ export const AuthModal: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-white tracking-tight">
-                  {mode === 'login' ? 'Institutional Role Authentication' : 'New Academic Member Registration'}
+                  {mode === 'login' ? `${loginRole === 'admin' ? 'Administrator' : loginRole === 'faculty' ? 'Faculty' : 'Student'} Portal Sign In` : 'New Academic Member Registration'}
                 </h3>
               </div>
               <p className="text-xs text-indigo-200">
@@ -188,12 +208,15 @@ export const AuthModal: React.FC = () => {
               </p>
             </div>
           </div>
-          <button
-            onClick={closeAuthModal}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {currentUser && (
+            <button
+              onClick={closeAuthModal}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              aria-label="Close sign-in"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
 
         {/* Mode Switch Tabs */}
@@ -243,48 +266,28 @@ export const AuthModal: React.FC = () => {
         {mode === 'login' && (
           <div className="p-5 space-y-4">
             
-            {/* Quick 1-Click Role Switcher for Test Evaluators */}
-            <div className="bg-gradient-to-r from-slate-50 to-indigo-50/50 p-3 rounded-xl border border-indigo-100">
-              <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-900 block mb-2">
-                ⚡ Quick Demo Persona Switcher (Instant Evaluation):
-              </span>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => loginAsDemoUser('student')}
-                  className="p-2 rounded-lg bg-white border border-indigo-200 hover:border-indigo-500 text-left transition-all shadow-2xs hover:shadow-xs group"
-                >
-                  <div className="flex items-center gap-1.5 text-indigo-700 font-bold text-xs">
-                    <GraduationCap className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>Student</span>
-                  </div>
-                  <p className="text-[10px] text-slate-500 truncate mt-0.5">Yashwanth Raj</p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => loginAsDemoUser('faculty')}
-                  className="p-2 rounded-lg bg-white border border-emerald-200 hover:border-emerald-500 text-left transition-all shadow-2xs hover:shadow-xs group"
-                >
-                  <div className="flex items-center gap-1.5 text-emerald-700 font-bold text-xs">
-                    <Briefcase className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Faculty</span>
-                  </div>
-                  <p className="text-[10px] text-slate-500 truncate mt-0.5">Dr. K. Ramesh</p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => loginAsDemoUser('admin')}
-                  className="p-2 rounded-lg bg-white border border-amber-200 hover:border-amber-500 text-left transition-all shadow-2xs hover:shadow-xs group"
-                >
-                  <div className="flex items-center gap-1.5 text-amber-700 font-bold text-xs">
-                    <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Admin</span>
-                  </div>
-                  <p className="text-[10px] text-slate-500 truncate mt-0.5">Dr. S. K. Narayanan</p>
-                </button>
-              </div>
+            <div className="grid grid-cols-3 gap-2" role="group" aria-label="Choose a login portal">
+              {([
+                { role: 'student', title: 'Student', detail: 'Learning space', icon: GraduationCap, active: 'border-indigo-600 bg-indigo-50 text-indigo-900' },
+                { role: 'faculty', title: 'Faculty', detail: 'Courseware studio', icon: Briefcase, active: 'border-emerald-600 bg-emerald-50 text-emerald-900' },
+                { role: 'admin', title: 'Admin', detail: 'Governance', icon: ShieldCheck, active: 'border-amber-600 bg-amber-50 text-amber-900' },
+              ] as const).map((portal) => {
+                const PortalIcon = portal.icon;
+                const isSelected = loginRole === portal.role;
+                return (
+                  <button
+                    key={portal.role}
+                    type="button"
+                    aria-pressed={isSelected}
+                    onClick={() => { setLoginRole(portal.role); setErrorMsg(null); }}
+                    className={`min-w-0 rounded-xl border p-3 text-left transition-colors ${isSelected ? portal.active : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'}`}
+                  >
+                    <PortalIcon className="mb-2 h-4 w-4" />
+                    <span className="block text-xs font-bold">{portal.title} Portal</span>
+                    <span className="mt-0.5 block truncate text-[10px] opacity-75">{portal.detail}</span>
+                  </button>
+                );
+              })}
             </div>
 
             {/* Standard Login Form */}
@@ -300,7 +303,7 @@ export const AuthModal: React.FC = () => {
                     required
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="student@easwari.edu or prof.ramesh@easwari.edu"
+                    placeholder={loginRole === 'admin' ? 'admin@easwari.edu' : loginRole === 'faculty' ? 'prof.ramesh@easwari.edu' : 'student@easwari.edu'}
                     className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
                   />
                 </div>
@@ -335,7 +338,7 @@ export const AuthModal: React.FC = () => {
                 disabled={submitting}
                 className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-1.5 active:scale-98"
               >
-                {submitting ? 'Authenticating...' : 'Sign In to Portal'}
+                {submitting ? 'Authenticating...' : `Continue to ${loginRole === 'admin' ? 'Admin' : loginRole === 'faculty' ? 'Faculty' : 'Student'} Portal`}
               </button>
             </form>
 
@@ -348,8 +351,9 @@ export const AuthModal: React.FC = () => {
               </div>
               <button
                 type="button"
-                onClick={loginWithGoogle}
-                className="w-full py-2 px-3 border border-slate-300 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors flex items-center justify-center gap-2"
+                onClick={handleGoogleLogin}
+                disabled={submitting}
+                className="w-full py-2 px-3 border border-slate-300 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -377,7 +381,7 @@ export const AuthModal: React.FC = () => {
                   <label className="block text-xs font-bold text-slate-700 mb-1">
                     Select Your Role in Institution:
                   </label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => { setSelectedRole('student'); setRegDesignation('Semester 6'); }}
@@ -404,19 +408,8 @@ export const AuthModal: React.FC = () => {
                       <span className="text-xs">Faculty</span>
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => { setSelectedRole('admin'); setRegDesignation('Administrator'); }}
-                      className={`py-2 px-2 rounded-xl border text-center transition-all flex flex-col items-center gap-1 ${
-                        selectedRole === 'admin'
-                          ? 'bg-amber-50 border-amber-600 text-amber-900 font-extrabold shadow-2xs'
-                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                      }`}
-                    >
-                      <ShieldCheck className="w-4 h-4 text-amber-600" />
-                      <span className="text-xs">Admin Staff</span>
-                    </button>
                   </div>
+                  <p className="mt-2 text-[10px] text-slate-500">Administrator accounts are provisioned by the institution.</p>
                 </div>
 
                 {/* Name */}
@@ -474,6 +467,22 @@ export const AuthModal: React.FC = () => {
                   </div>
                 </div>
 
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Create Password <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    placeholder="At least 8 characters"
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                  />
+                </div>
+
                 {/* Department & Designation/Semester */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
@@ -522,15 +531,16 @@ export const AuthModal: React.FC = () => {
                 </div>
 
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-600 leading-relaxed">
-                  <span className="font-bold text-slate-800">Verification Protocol:</span> An OTP will be dispatched to your email &amp; mobile. After OTP verification, your profile will be submitted to the Academic Administrator for final access approval.
+                  <span className="font-bold text-slate-800">Verification Protocol:</span> A one-time code will be emailed to you. After verification, your account will be submitted to the Academic Administrator for approval.
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-1.5 active:scale-98"
+                  disabled={submitting}
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-1.5 active:scale-98"
                 >
                   <Send className="w-4 h-4" />
-                  <span>Send OTP Verification Code</span>
+                  <span>{submitting ? 'Sending code...' : 'Email me a verification code'}</span>
                 </button>
               </form>
             )}
@@ -544,13 +554,8 @@ export const AuthModal: React.FC = () => {
                   </div>
                   <h4 className="text-xs font-extrabold text-indigo-950">Verify 6-Digit Email OTP</h4>
                   <p className="text-[11px] text-indigo-700 mt-0.5">
-                    We dispatched an authentication code to <strong>{regEmail}</strong>
+                    {otpSentMessage || <>A verification code was sent to <strong>{regEmail}</strong>.</>}
                   </p>
-                  {generatedOtpHint && (
-                    <div className="mt-2 inline-block bg-white px-2.5 py-1 rounded-md border border-indigo-300 text-[11px] font-mono font-bold text-indigo-900 shadow-2xs">
-                      Simulation OTP: <span className="text-indigo-600 tracking-widest">{generatedOtpHint}</span>
-                    </div>
-                  )}
                 </div>
 
                 <div>
@@ -563,7 +568,9 @@ export const AuthModal: React.FC = () => {
                     required
                     value={enteredOtp}
                     onChange={(e) => setEnteredOtp(e.target.value)}
-                    placeholder="482910"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="6-digit code"
                     className="w-full text-center tracking-widest font-mono text-lg py-2.5 px-3 rounded-xl border border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-600 font-black text-indigo-950 bg-indigo-50/20"
                   />
                   <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2">
@@ -573,10 +580,15 @@ export const AuthModal: React.FC = () => {
                     </span>
                     <button
                       type="button"
-                      onClick={() => {
-                        const res = sendEmailOtp(regEmail, regMobile);
-                        setGeneratedOtpHint(res.generatedOtp);
-                        setEnteredOtp(res.generatedOtp);
+                      onClick={async () => {
+                        setErrorMsg(null);
+                        try {
+                          const res = await sendEmailOtp(regEmail);
+                          setOtpSentMessage(res.message);
+                          setCountdown(300);
+                        } catch (err: any) {
+                          setErrorMsg(err.message || 'Unable to resend the verification code.');
+                        }
                       }}
                       className="text-indigo-600 hover:text-indigo-800 font-bold"
                     >
@@ -616,7 +628,7 @@ export const AuthModal: React.FC = () => {
                     Registration Verified &amp; Pending Admin Approval
                   </h4>
                   <p className="text-xs text-slate-600 leading-relaxed max-w-sm mx-auto">
-                    Your email (<span className="font-semibold text-slate-900">{regEmail}</span>) and mobile phone have been successfully verified.
+                    Your email (<span className="font-semibold text-slate-900">{regEmail}</span>) has been verified.
                   </p>
                 </div>
 
@@ -634,17 +646,17 @@ export const AuthModal: React.FC = () => {
                     <span className="font-medium text-slate-800">{regDepartment}</span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-slate-500">SMS / Email OTP:</span>
+                    <span className="text-slate-500">Email OTP:</span>
                     <span className="font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded text-[10px] flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                       <span>OTP Verified</span>
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-slate-500">Firebase Auth Verification:</span>
+                    <span className="text-slate-500">Email verification:</span>
                     <span className="font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded text-[10px] flex items-center gap-1">
                       <Clock className="w-3 h-3 text-amber-600" />
-                      <span>Link Dispatched to Inbox</span>
+                      <span>Verified by OTP</span>
                     </span>
                   </div>
                   <div className="flex justify-between items-center pt-1 border-t border-slate-200">
@@ -655,57 +667,13 @@ export const AuthModal: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Email Verification Action Helper */}
-                <div className="bg-amber-500/10 border border-amber-300/80 rounded-xl p-3 text-left max-w-md mx-auto space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-amber-600" />
-                    <span className="text-xs font-bold text-amber-900">Firebase Email Link Sent</span>
-                  </div>
-                  <p className="text-[11px] text-slate-600">
-                    A secure verification link was generated for <strong>{regEmail}</strong>. You can verify it via the incoming email or use instant verification for testing.
-                  </p>
-                  <div className="flex items-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await simulateEmailVerification();
-                        setSuccessMsg('Email marked as verified in Firebase Authentication document!');
-                      }}
-                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
-                    >
-                      Instant Verify Email (Demo)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const res = await sendVerificationEmail();
-                        setSuccessMsg(res.message);
-                      }}
-                      className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
-                    >
-                      Resend Link
-                    </button>
-                  </div>
-                </div>
-
                 <div className="pt-2 flex flex-col sm:flex-row gap-2 justify-center">
                   <button
                     type="button"
-                    onClick={() => {
-                      // Switch to admin demo so the user can immediately approve their registered user!
-                      loginAsDemoUser('admin');
-                    }}
-                    className="py-2.5 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-1.5"
-                  >
-                    <ShieldCheck className="w-4 h-4" />
-                    <span>Open Admin Portal to Approve Now</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={closeAuthModal}
+                    onClick={() => { setMode('login'); setOtpStep('details'); setErrorMsg(null); }}
                     className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors"
                   >
-                    Close
+                    Return to sign in
                   </button>
                 </div>
               </div>
