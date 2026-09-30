@@ -129,14 +129,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const syncUserProfile = async (user: User): Promise<StudentProfile> => {
     if (!user.email) throw new Error('The authenticated account did not provide an email address.');
 
-    const response = await fetch('/api/users');
-    if (!response.ok) throw new Error('Unable to verify your institutional account. Try again later.');
+    const token = await user.getIdToken();
+    const response = await fetch('/api/auth/profile', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ name: user.displayName || '' }),
+    });
     const data = await response.json();
-    const account = (data.users as StudentProfile[] | undefined)?.find(
-      (profile) => profile.email.toLowerCase() === user.email!.toLowerCase()
-    );
-
-    if (!account) throw new Error('No registered institutional account matches this email. Contact your administrator.');
+    if (!response.ok) throw new Error(data.error || 'Unable to verify your institutional account. Try again later.');
+    const account = data.user as StudentProfile;
     if (account.status !== 'active') {
       throw new Error(account.status === 'pending_approval'
         ? 'Your account is awaiting administrator approval.'
@@ -148,7 +152,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const profile = { ...account, emailVerified: Boolean(account.emailVerified || user.emailVerified) };
     setStudentProfile(profile);
-    setAllUsers((previous) => previous.map((item) => item.email.toLowerCase() === profile.email.toLowerCase() ? profile : item));
+    setAllUsers((previous) => {
+      const exists = previous.some((item) => item.email.toLowerCase() === profile.email.toLowerCase());
+      return exists
+        ? previous.map((item) => item.email.toLowerCase() === profile.email.toLowerCase() ? profile : item)
+        : [...previous, profile];
+    });
+
+    if (profile.role === 'admin') {
+      try {
+        const usersResponse = await fetch('/api/users', { headers: { Authorization: `Bearer ${token}` } });
+        const usersData = await usersResponse.json();
+        if (usersResponse.ok && usersData.success) setAllUsers(usersData.users);
+      } catch (err) {
+        console.warn('Administrator user-list sync notice:', err);
+      }
+    }
 
     try {
       await setDoc(doc(db, 'users', user.uid), {
@@ -171,16 +190,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const fetchDatabaseState = async () => {
       try {
-        const [usersRes, notesRes, annRes, logsRes] = await Promise.all([
-          fetch('/api/users').then((r) => r.json()).catch(() => null),
+        const [notesRes, annRes, logsRes] = await Promise.all([
           fetch('/api/faculty/notes').then((r) => r.json()).catch(() => null),
           fetch('/api/announcements').then((r) => r.json()).catch(() => null),
           fetch('/api/activity-logs').then((r) => r.json()).catch(() => null),
         ]);
 
-        if (usersRes?.success && usersRes.users?.length > 0) {
-          setAllUsers(usersRes.users);
-        }
         if (notesRes?.success && notesRes.notes) {
           setFacultyNotes(notesRes.notes);
         }
@@ -379,7 +394,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             updateDoc(userRef, {
               status: 'active',
               approvedAt: serverTimestamp(),
-              approvedBy: studentProfile.name || 'Dr. S. K. Narayanan (Dean)',
+              approvedBy: studentProfile.name || 'Administrator',
             });
           } catch (e) {
             console.warn('Firestore write omitted for demo mock user:', e);
@@ -575,12 +590,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const updateStudentData = async (updates: Partial<StudentProfile>) => {
     setStudentProfile((prev) => ({ ...prev, ...updates }));
 
-    const uid = studentProfile.uid || currentUser?.uid;
-    if (uid) {
+    const uid = currentUser?.uid;
+    if (uid && currentUser) {
       try {
+        const token = await currentUser.getIdToken();
         await fetch(`/api/users/${uid}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify(updates),
         });
       } catch (err) {

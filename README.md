@@ -21,4 +21,4 @@ View your app in AI Studio: https://ai.studio/apps/2fc4c8a8-edad-4b7a-bd33-99eaa
 
 Email OTP registration also requires a Resend API key and a verified sender address. Set `RESEND_API_KEY` and `RESEND_FROM_EMAIL` in `.env.local`; OTP requests return a configuration error until these are set.
 
-For Google sign-in, enable the Google provider in Firebase Authentication and add `localhost` to its Authorized domains. Sign-in is limited to a verified Google email with an active account and matching role in the institutional database.
+For Google sign-in, enable the Google provider in Firebase Authentication and add `localhost` to its Authorized domains. Set `ADMIN_EMAILS` to a comma-separated list of verified Google accounts allowed to bootstrap an administrator profile. Student and faculty accounts are created through OTP registration and require administrator approval.

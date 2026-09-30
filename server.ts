@@ -16,7 +16,7 @@ const googleAutoApproveDomains = (process.env.GOOGLE_AUTO_APPROVE_DOMAINS || '')
   .filter(Boolean);
 
 // Emails allowed to bootstrap an administrator account through Google sign-in.
-const bootstrapAdminEmails = (process.env.ADMIN_EMAILS || 'admin@easwari.edu')
+const bootstrapAdminEmails = (process.env.ADMIN_EMAILS || '')
   .split(',')
   .map((email) => email.trim().toLowerCase())
   .filter(Boolean);
@@ -84,6 +84,20 @@ const requireAdmin: express.RequestHandler = (req, res, next) => {
   });
 };
 
+const requireUser: express.RequestHandler = (req, res, next) => {
+  const token = /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '')?.[1];
+  if (!token) return res.status(401).json({ error: 'A valid Firebase session is required.' });
+
+  void verifyFirebaseIdToken(token, false).then((claims) => {
+    if (claims.sub !== req.params.uid) {
+      return res.status(403).json({ error: 'You can only update your own profile.' });
+    }
+    next();
+  }).catch(() => {
+    res.status(401).json({ error: 'The Firebase session could not be verified. Sign in again.' });
+  });
+};
+
 let aiClient: GoogleGenAI | null = null;
 function getAiClient(): GoogleGenAI | null {
   if (!aiClient && process.env.GEMINI_API_KEY) {
@@ -92,7 +106,7 @@ function getAiClient(): GoogleGenAI | null {
   return aiClient;
 }
 
-// Derives a readable display name from an email local part, e.g. "k.ramesh+cse" -> "K Ramesh".
+// Derives a readable display name from an email local part, e.g. "a.learner+eng" -> "A Learner".
 function deriveNameFromEmail(email: string): string {
   const localPart = email.split('@')[0] || '';
   const words = localPart
@@ -138,7 +152,40 @@ async function startServer() {
   // ==========================================
   // 2. AUTHENTICATION & USER MANAGEMENT (DB)
   // ==========================================
-  app.get('/api/users', (req, res) => {
+  app.post('/api/auth/profile', async (req, res) => {
+    const token = /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '')?.[1];
+    if (!token) return res.status(401).json({ error: 'A valid Firebase session is required.' });
+
+    try {
+      const claims = await verifyFirebaseIdToken(token);
+      const email = claims.email.trim().toLowerCase();
+      let account = dbService.getUserByEmail(email);
+
+      if (!account && bootstrapAdminEmails.includes(email)) {
+        account = dbService.createUser({
+          uid: claims.sub,
+          name: typeof req.body?.name === 'string' && req.body.name.trim()
+            ? req.body.name.trim()
+            : deriveNameFromEmail(email),
+          email,
+          role: 'admin',
+          status: 'active',
+          emailVerified: true,
+          otpVerified: true,
+          designation: 'Administrator',
+        });
+      }
+
+      if (!account) {
+        return res.status(404).json({ error: 'No approved institutional account matches this email. Contact your administrator.' });
+      }
+      return res.json({ success: true, user: account });
+    } catch {
+      return res.status(401).json({ error: 'The Firebase account could not be verified.' });
+    }
+  });
+
+  app.get('/api/users', requireAdmin, (req, res) => {
     try {
       const users = dbService.getAllUsers();
       res.json({ success: true, users });
@@ -147,7 +194,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/users/:uid', (req, res) => {
+  app.get('/api/users/:uid', requireAdmin, (req, res) => {
     try {
       const user = dbService.getUserById(req.params.uid);
       if (!user) return res.status(404).json({ error: 'User not found' });
@@ -197,7 +244,7 @@ async function startServer() {
         mobile,
         role,
         status: 'pending_approval',
-        department: department || 'Computer Science and Engineering',
+        department: department || '',
         semester: role === 'student' ? designationOrSemester : 'Faculty',
         designation: designationOrSemester,
         rollOrEmpNumber,
@@ -305,7 +352,7 @@ async function startServer() {
     res.json({ success: true, verified: true });
   });
 
-  app.put('/api/users/:uid', (req, res) => {
+  app.put('/api/users/:uid', requireUser, (req, res) => {
     try {
       const updated = dbService.updateUser(req.params.uid, req.body);
       res.json({ success: true, user: updated });
@@ -320,13 +367,13 @@ async function startServer() {
       const updated = dbService.updateUser(req.params.uid, {
         status: 'active',
         approvedAt: new Date().toISOString().split('T')[0],
-        approvedBy: approvedBy || 'Dr. S. K. Narayanan (Dean)',
+        approvedBy: approvedBy || 'Demo Administrator (Dean)',
       });
 
       if (updated) {
         dbService.addActivityLog({
           userName: approvedBy || 'Administrator',
-          userEmail: 'admin@easwari.edu',
+          userEmail: '',
           userRole: 'admin',
           action: `Approved registration for ${updated.name} (${updated.email}). Access granted.`,
           status: 'SUCCESS',
@@ -345,7 +392,7 @@ async function startServer() {
       if (updated) {
         dbService.addActivityLog({
           userName: 'Administrator',
-          userEmail: 'admin@easwari.edu',
+          userEmail: '',
           userRole: 'admin',
           action: `Rejected / Revoked registration for ${updated.name} (${updated.email}).`,
           status: 'WARNING',
@@ -386,7 +433,7 @@ async function startServer() {
   // ==========================================
   app.get('/api/tasks', (req, res) => {
     try {
-      const userId = (req.query.userId as string) || 'student-001';
+      const userId = (req.query.userId as string) || '';
       const tasks = dbService.getTasksForUser(userId);
       res.json({ success: true, tasks });
     } catch (err: any) {
@@ -442,7 +489,7 @@ async function startServer() {
 
       dbService.addActivityLog({
         userName: note.facultyName || 'Faculty',
-        userEmail: note.facultyEmail || 'prof.ramesh@easwari.edu',
+        userEmail: note.facultyEmail || '',
         userRole: 'faculty',
         action: `Uploaded lecture notes: "${note.title}" for ${note.unit}`,
         status: 'SUCCESS',
@@ -671,7 +718,7 @@ Return ONLY valid JSON:
 
       dbService.addActivityLog({
         userName: userId,
-        userEmail: 'student@easwari.edu',
+        userEmail: '',
         userRole: 'student',
         action: `Completed 5-minute Adaptive Diagnostic: Score ${score}/${totalQuestions || 4} (${bloomTier}). Recalibrated mastery metrics.`,
         status: 'SUCCESS',
